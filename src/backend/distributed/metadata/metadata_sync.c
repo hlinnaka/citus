@@ -110,7 +110,6 @@ static AccessPriv * GetAccessPrivObjectForGrantStmt(char *permission);
 static RoleSpec * GetRoleSpecObjectForGrantStmt(Oid roleOid);
 static List * GenerateGrantOnSchemaQueriesFromAclItem(Oid schemaOid,
 													  AclItem *aclItem);
-static void SetLocalEnableDependencyCreation(bool state);
 static char * GenerateSetRoleQuery(Oid roleOid);
 static void MetadataSyncSigTermHandler(SIGNAL_ARGS);
 static void MetadataSyncSigAlrmHandler(SIGNAL_ARGS);
@@ -2081,7 +2080,7 @@ GetRoleSpecObjectForGrantStmt(Oid roleOid)
 /*
  * SetLocalEnableDependencyCreation sets the enable_object_propagation locally
  */
-static void
+void
 SetLocalEnableDependencyCreation(bool state)
 {
 	set_config_option("citus.enable_object_propagation", state == true ? "on" : "off",

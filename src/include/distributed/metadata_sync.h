@@ -65,6 +65,7 @@ extern void GetDependentSequencesWithRelation(Oid relationId, List **attnumList,
 											  List **dependentSequenceList, AttrNumber
 											  attnum);
 extern Oid GetAttributeTypeOid(Oid relationId, AttrNumber attnum);
+extern void SetLocalEnableDependencyCreation(bool state);
 
 #define DELETE_ALL_NODES "TRUNCATE pg_dist_node CASCADE"
 #define DELETE_ALL_DISTRIBUTED_OBJECTS "TRUNCATE citus.pg_dist_object"

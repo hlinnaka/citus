@@ -83,3 +83,5 @@ DROP FUNCTION pg_catalog.citus_shards_on_worker();
 DROP FUNCTION pg_catalog.citus_shard_indexes_on_worker();
 #include "../udfs/create_distributed_function/9.0-1.sql"
 ALTER TABLE citus.pg_dist_object DROP COLUMN force_delegation;
+
+DROP FUNCTION pg_catalog.citus_finalize_upgrade_to_citus11();
