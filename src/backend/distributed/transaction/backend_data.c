@@ -15,6 +15,9 @@
 #include "distributed/pg_version_constants.h"
 
 #include "miscadmin.h"
+#include "unistd.h"
+
+#include "safe_lib.h"
 
 #include "funcapi.h"
 #include "access/htup_details.h"
@@ -43,7 +46,7 @@
 
 
 #define GET_ACTIVE_TRANSACTION_QUERY "SELECT * FROM get_all_active_transactions();"
-#define ACTIVE_TRANSACTION_COLUMN_COUNT 6
+#define ACTIVE_TRANSACTION_COLUMN_COUNT 7
 
 /*
  * Each backend's data reside in the shared memory
@@ -78,6 +81,7 @@ typedef struct BackendManagementShmemData
 
 static void StoreAllActiveTransactions(Tuplestorestate *tupleStore, TupleDesc
 									   tupleDescriptor);
+static uint64 GenerateGlobalPID(void);
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static BackendManagementShmemData *backendManagementShmemData = NULL;
@@ -315,6 +319,7 @@ get_global_active_transactions(PG_FUNCTION_ARGS)
 			values[3] = ParseBoolField(result, rowIndex, 3);
 			values[4] = ParseIntField(result, rowIndex, 4);
 			values[5] = ParseTimestampTzField(result, rowIndex, 5);
+			values[6] = ParseIntField(result, rowIndex, 6);
 
 			tuplestore_putvalues(tupleStore, tupleDescriptor, values, isNulls);
 		}
@@ -384,8 +389,7 @@ StoreAllActiveTransactions(Tuplestorestate *tupleStore, TupleDesc tupleDescripto
 
 		SpinLockAcquire(&currentBackend->mutex);
 
-		/* we're only interested in backends initiated by Citus */
-		if (currentBackend->citusBackend.initiatorNodeIdentifier < 0)
+		if (currentBackend->globalPID == 0)
 		{
 			SpinLockRelease(&currentBackend->mutex);
 			continue;
@@ -427,6 +431,7 @@ StoreAllActiveTransactions(Tuplestorestate *tupleStore, TupleDesc tupleDescripto
 		values[3] = !coordinatorOriginatedQuery;
 		values[4] = UInt64GetDatum(transactionNumber);
 		values[5] = TimestampTzGetDatum(transactionIdTimestamp);
+		values[6] = UInt64GetDatum(currentBackend->globalPID);
 
 		tuplestore_putvalues(tupleStore, tupleDescriptor, values, isNulls);
 
@@ -777,6 +782,114 @@ MarkCitusInitiatedCoordinatorBackend(void)
 	MyBackendData->citusBackend.transactionOriginator = true;
 
 	SpinLockRelease(&MyBackendData->mutex);
+}
+
+
+/*
+ * AssignGlobalPID assigns a global process id for the current backend if
+ * it is not already assigned
+ */
+void
+AssignGlobalPID(void)
+{
+	if (MyBackendData->globalPID != 0)
+	{
+		return;
+	}
+
+	if (!IsCitusInitiatedRemoteBackend())
+	{
+		uint64 globalPID = GenerateGlobalPID();
+
+		SpinLockAcquire(&MyBackendData->mutex);
+		MyBackendData->globalPID = globalPID;
+		SpinLockRelease(&MyBackendData->mutex);
+
+		return;
+	}
+
+	uint64 globalPID = ExtractGlobalPID();
+
+	SpinLockAcquire(&MyBackendData->mutex);
+	MyBackendData->globalPID = globalPID;
+	SpinLockRelease(&MyBackendData->mutex);
+}
+
+
+/*
+ * GetGlobalPID returns the global process id of the current backend
+ */
+uint64
+GetGlobalPID(void)
+{
+
+	/* assign here incase it is not assigned already */
+	AssignGlobalPID();
+
+	uint64 globalPID = 0;
+	SpinLockAcquire(&MyBackendData->mutex);
+	globalPID = MyBackendData->globalPID;
+	SpinLockRelease(&MyBackendData->mutex);
+
+
+	return globalPID;
+}
+
+
+/*
+ * GenerateGlobalPID generates the global process id for the current backend
+ */
+static uint64
+GenerateGlobalPID(void)
+{
+	/*
+	 * We try to create a human readable global pid that consists of node id and process id.
+	 * By multiplying node id with 10^10 and adding pid we generate a number where the smallest
+	 * 10 digit represent the pid and the remaining digits are the node id
+	 *
+	 * Both node id and pid are 32 bit. We use 10^10 to fit all possible pids. Some very large
+	 * node ids might cause overflow. But even for the applications that scale around 50 nodes every
+	 * day it'd take about 100K years. So we are not worried.
+	 */
+	return (((uint64) GetLocalNodeId()) * 10000000000) + getpid();
+}
+
+
+/*
+ * ExtractGlobalPID extracts the global process id from the application name and returns it
+ * if the application name is not compatible with Citus' application names returns 0
+ */
+uint64
+ExtractGlobalPID(void)
+{
+	/* does application name exist */
+	if (!application_name)
+	{
+		return 0;
+	}
+
+	uint64 prefixLength = strlen(CITUS_APPLICATION_NAME_PREFIX);
+
+	/* does application name start with Citus's application name prefix */
+	if (strncmp(application_name, CITUS_APPLICATION_NAME_PREFIX, prefixLength) != 0)
+	{
+		return 0;
+	}
+
+	/* are the remaining characters of the application name numbers */
+	uint64 numberOfRemainingChars = strlen(application_name) - prefixLength;
+	if (!strisdigit_s(application_name + prefixLength, numberOfRemainingChars))
+	{
+		return 0;
+	}
+
+	StringInfo applicationName = makeStringInfo();
+	appendStringInfoString(applicationName, application_name);
+
+	char *globalPIDString = &applicationName->data[strlen(CITUS_APPLICATION_NAME_PREFIX)];
+	uint64 globalPID = strtoul(globalPIDString, NULL, 10);
+
+	return globalPID;
 }
 
 
