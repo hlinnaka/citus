@@ -448,6 +448,13 @@ ErrorIfCurrentUserCanNotDistributeObject(ObjectType type, ObjectAddress *addr,
 			break;
 		}
 
+		case OBJECT_TSCONFIGURATION:
+		{
+			pg_ts_config_ownercheck(addr->objectId, userId);
+			skipAclCheck = true;
+			break;
+		}
+
 		case OBJECT_TYPE:
 		{
 			idToCheck = addr->objectId;

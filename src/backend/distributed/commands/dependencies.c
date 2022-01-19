@@ -224,13 +224,27 @@ GetDependencyCreateDDLCommands(const ObjectAddress *dependency)
 	{
 		case OCLASS_CLASS:
 		{
-			/*
-			 * types have an intermediate dependency on a relation (aka class), so we do
-			 * support classes when the relkind is composite
-			 */
-			if (get_rel_relkind(dependency->objectId) == RELKIND_COMPOSITE_TYPE)
+			switch (get_rel_relkind(dependency->objectId))
 			{
-				return NIL;
+				/*
+				 * types have an intermediate dependency on a relation (aka class), so we
+				 * do support classes when the relkind is composite
+				 */
+				case RELKIND_COMPOSITE_TYPE:
+				{
+					return NIL;
+				}
+
+				/*
+				 * As indexes are created when we create the actual shards there are no
+				 * dependency commands to execute. However they do show up in the list of
+				 * dependencies, mostly to make sure that any dependencies of the indexes
+				 * are followed upon.
+				 */
+				case RELKIND_INDEX:
+				{
+					return NIL;
+				}
 			}
 
 			/* if this relation is not supported, break to the error at the end */
@@ -277,6 +291,11 @@ GetDependencyCreateDDLCommands(const ObjectAddress *dependency)
 			DDLCommands = list_concat(DDLCommands, grantDDLCommands);
 
 			return DDLCommands;
+		}
+
+		case OCLASS_TSCONFIG:
+		{
+			return CreateTextSearchConfigDDLCommandsIdempotent(dependency);
 		}
 
 		case OCLASS_TYPE:
