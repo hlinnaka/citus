@@ -13,6 +13,7 @@
 #include "catalog/dependency.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_ts_config.h"
 #include "catalog/pg_type.h"
 #include "fmgr.h"
 #include "nodes/makefuncs.h"
@@ -152,6 +153,18 @@ CreateStmtByObjectAddress(const ObjectAddress *address)
 			return DeparseTreeNode(CreateTypeStmtByObjectAddress(address));
 		}
 
+		case OCLASS_TSCONFIG:
+		{
+			/*
+			 * We do support TEXT SEARCH CONFIGURATION, however, we can't recreate the
+			 * object in 1 command. Since the returned text is compared to the create
+			 * statement sql we always want the sql to be different compared to the
+			 * canonical creation sql we return here, hence we return an empty string, as
+			 * that should never match the sql we have passed in for the creation.
+			 */
+			return "";
+		}
+
 		default:
 		{
 			ereport(ERROR, (errmsg(
@@ -184,6 +197,11 @@ GenerateBackupNameForCollision(const ObjectAddress *address)
 		case OCLASS_TYPE:
 		{
 			return GenerateBackupNameForTypeCollision(address);
+		}
+
+		case OCLASS_TSCONFIG:
+		{
+			return GenerateBackupNameForTextSearchConfiguration(address);
 		}
 
 		default:
@@ -248,6 +266,25 @@ CreateRenameTypeStmt(const ObjectAddress *address, char *newName)
 
 
 /*
+ * CreateRenameTextSearchStmt creates a rename statement for a text search configuration
+ * based on its ObjectAddress. The rename statement will rename the existing object on its
+ * address to the value provided in newName.
+ */
+static RenameStmt *
+CreateRenameTextSearchStmt(const ObjectAddress *address, char *newName)
+{
+	Assert(address->classId == TSConfigRelationId);
+	RenameStmt *stmt = makeNode(RenameStmt);
+
+	stmt->renameType = OBJECT_TSCONFIGURATION;
+	stmt->object = (Node *) get_ts_config_namelist(address->objectId);
+	stmt->newname = newName;
+
+	return stmt;
+}
+
+
+/*
  * CreateRenameTypeStmt creates a rename statement for a type based on its ObjectAddress.
  * The rename statement will rename the existing object on its address to the value
  * provided in newName.
@@ -287,6 +324,11 @@ CreateRenameStatement(const ObjectAddress *address, char *newName)
 		case OCLASS_TYPE:
 		{
 			return CreateRenameTypeStmt(address, newName);
+		}
+
+		case OCLASS_TSCONFIG:
+		{
+			return CreateRenameTextSearchStmt(address, newName);
 		}
 
 		default:
